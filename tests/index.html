@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess Coach Tests</title>
+<style>
+  :root { --bg: #fff; --text: #1c2230; --ok: #1a7f37; --bad: #cf222e; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0d1117; --text: #e6edf3; --ok: #3fb950; --bad: #f85149; } }
+  :root[data-theme="dark"] { --bg: #0d1117; --text: #e6edf3; --ok: #3fb950; --bad: #f85149; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 ui-monospace, Consolas, monospace; margin: 0; padding: 16px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  h1 { font-size: 18px; }
+</style>
+</head>
+<body>
+<h1>Chess Coach: known-answer tests</h1>
+<p>Run after every change to tagging or thresholds. Engine tests use depth 14 on the sample games.</p>
+<div id="out">Running…</div>
+<script type="module">
+import { splitGames, parseGame, detectUserColor } from '../js/pgn.js';
+import { Engine } from '../js/engine.js';
+import { analyzeGame, winPct, scoreToCp } from '../js/analysis.js';
+import { SAMPLE_PGN } from '../js/samples.js';
+
+const out = document.getElementById('out');
+const results = [];
+const check = (name, cond, detail = '') => results.push({ name, ok: !!cond, detail });
+const render = () => {
+  const pass = results.filter((r) => r.ok).length;
+  out.innerHTML = `<p><b>${pass}/${results.length} passed</b></p>` + results.map((r) =>
+    `<div class="${r.ok ? 'ok' : 'bad'}">${r.ok ? '✓' : '✗'} ${r.name}${r.detail ? ` <span>— ${r.detail}</span>` : ''}</div>`).join('');
+  window.testResults = { pass, total: results.length, failed: results.filter((r) => !r.ok).map((r) => r.name) };
+};
+
+// ---- parser ----
+const bare = parseGame('e3 e5 2. g3 Bc5 3. Bg2 d6');
+check('bare move list without "1." parses', bare.moves.length === 6);
+check('0-0 castling notation accepted', parseGame('1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. 0-0').moves.at(-1).san === 'O-O');
+const clk = parseGame('[White "a"]\n[Black "b"]\n\n1. e4 {[%clk 0:09:55.7]} 1... e5 {[%clk 0:09:54.4]} 2. Nf3 {[%clk 0:09:50]} *');
+check('clock tags read', clk.moves[0].clock === 595.7 && clk.moves[1].clock === 594.4);
+check('comments and variations stripped', parseGame('1. e4 {good} (1. d4 d5) e5 $1 2. Nf3 *').moves.length === 3);
+check('six sample games split', splitGames(SAMPLE_PGN).length === 6);
+check('user side from username', detectUserColor({ White: 'Clerv', Black: 'x' }, 'clerv') === 'w');
+check('explicit side wins', detectUserColor({ White: 'clerv' }, 'clerv', 'b') === 'b');
+let threw = false; try { parseGame('1. e4 e5 2. Ke3'); } catch { threw = true; }
+check('illegal move reports an error', threw);
+
+// ---- scoring ----
+check('win% of 0cp is 50', Math.abs(winPct(0) - 50) < 0.01);
+check('mate scores map to 100/0', winPct(scoreToCp({ mate: 3 })) === 100 && winPct(scoreToCp({ mate: -2 })) === 0);
+render();
+
+// ---- engine known answers (from the first coaching session) ----
+const engine = new Engine('../vendor/stockfish/stockfish.js');
+const games = splitGames(SAMPLE_PGN).map(parseGame);
+const run = async (i) => analyzeGame(games[i], detectUserColor(games[i].headers, 'clerv'), engine, { depth: 14 });
+const mv = (r, label) => r.moves.find((m) => `${m.moveLabel}${m.san}` === label);
+
+const g1 = await run(0);
+check('G1: 8...Bd7 is a mistake or blunder', ['mistake', 'blunder'].includes(mv(g1, '8...Bd7').cls), mv(g1, '8...Bd7').cls);
+check('G1: 7...Bf5 flagged', ['mistake', 'blunder'].includes(mv(g1, '7...Bf5').cls));
+check('G1: 9.Bxa8 is White\'s blunder', mv(g1, '9.Bxa8').cls === 'blunder');
+check('G1: 9...Bxa4 punished it', mv(g1, '9...Bxa4').goodTags.includes('punished_blunder'));
+check('G1: 26...Nd4+ is a double check', mv(g1, '26...Nd4+').goodTags.includes('double_check'));
+check('G1: 35...Qe2# checkmate', mv(g1, '35...Qe2#').goodTags.includes('checkmate_delivered'));
+check('G1: result is a win', g1.userResult === 'win');
+render();
+
+const g2 = await run(1);
+check('G2: 14.Na5 hung a piece by moving into attack', mv(g2, '14.Na5').tags.includes('hung_piece') && mv(g2, '14.Na5').why === 'moved_into_attack');
+check('G2: never castled flagged', g2.summary.habits.flags.includes('no_castle'));
+check('G2: winning position not converted', g2.summary.conversion.threw);
+render();
+
+const g4 = await run(3);
+check('G4 (as Black): 10...exf4 opened a line', mv(g4, '10...exf4').tags.includes('opened_line'), mv(g4, '10...exf4').tags.join(','));
+render();
+
+const g5 = await run(4);
+check('G5: 9.Nf3 missed a mate', mv(g5, '9.Nf3').tags.includes('missed_mate'));
+check('G5: king and queen forked late', g5.moves.some((m) => m.tags.includes('forked_king_and_queen')));
+check('G5: winning position not converted', g5.summary.conversion.threw);
+render();
+
+const g6 = await run(5);
+check('G6: clean game, no user blunders', !(g6.summary.counts.user.blunder), JSON.stringify(g6.summary.counts.user));
+check('G6: accuracy above 80', g6.summary.accuracy.user > 80, Math.round(g6.summary.accuracy.user));
+render();
+engine.terminate();
+</script>
+</body>
+</html>

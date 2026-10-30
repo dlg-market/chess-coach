@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Chess Coach</title>
+  <meta name="description" content="Paste a game, Stockfish analyses it in your browser, and a rule-based tutor turns the engine's numbers into lessons and puzzles.">
+  <link rel="icon" href="assets/pieces/wN.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body data-theme="cabin">
+  <div class="scene" aria-hidden="true">
+    <div class="fireglow"></div>
+    <div class="crtglow"></div>
+    <div class="vignette"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand"><img src="assets/pieces/wN.svg" alt=""><span>Chess Coach</span></div>
+    <nav class="tabs" role="tablist">
+      <button data-page="analyse" class="active">Analyse</button>
+      <button data-page="review">Review</button>
+      <button data-page="puzzles">Puzzles <span class="badge" id="due-badge" hidden></span></button>
+      <button data-page="progress">Progress</button>
+      <button data-page="library">Library</button>
+      <button data-page="settings" aria-label="Settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ANALYSE -->
+    <section id="page-analyse" class="page active">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Paste a game</h2>
+          <p class="muted">One or many PGNs, or a bare move list like <code>1. d4 d5 2. Bf4 …</code>. Your side is detected from your username.</p>
+          <textarea id="pgn-input" rows="9" placeholder="[White &quot;clerv&quot;] …&#10;&#10;1. d4 d5 2. Bf4 f6 3. e3 e5 …"></textarea>
+          <div class="row wrap">
+            <label class="file-btn btn ghost">Upload .pgn<input type="file" id="pgn-file" accept=".pgn,.txt" multiple hidden></label>
+            <label>Your side
+              <select id="side-select">
+                <option value="auto">Auto (username)</option>
+                <option value="w">White</option>
+                <option value="b">Black</option>
+              </select>
+            </label>
+            <button class="btn ghost" id="load-samples">Load my sample games</button>
+            <span class="grow"></span>
+            <button class="btn primary" id="analyse-btn">Analyse</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Import from chess.com</h2>
+          <p class="muted">Pulls your latest games straight from chess.com's public API, clock times included.</p>
+          <div class="row wrap">
+            <label>Username <input id="cc-user" type="text" autocomplete="off" spellcheck="false"></label>
+            <label>Games
+              <select id="cc-count"><option>5</option><option selected>10</option><option>20</option><option>40</option></select>
+            </label>
+            <label>Type
+              <select id="cc-class"><option value="rapid" selected>Rapid</option><option value="">All</option><option value="blitz">Blitz</option><option value="bullet">Bullet</option></select>
+            </label>
+            <button class="btn" id="cc-fetch">Fetch</button>
+          </div>
+          <div id="cc-list" class="cc-list"></div>
+          <div class="row" id="cc-actions" hidden>
+            <label class="check"><input type="checkbox" id="cc-losses"> Losses only</label>
+            <span class="grow"></span>
+            <button class="btn primary" id="cc-analyse">Analyse selected</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="queue-card" hidden>
+        <h2>Engine at work</h2>
+        <div id="queue"></div>
+      </div>
+
+      <div class="card loop-card">
+        <h2>The loop that raises your rating</h2>
+        <ol class="loop">
+          <li><b>Analyse</b> every game, losses first.</li>
+          <li><b>Review</b> the key moments. Watch the replay slow down where it mattered.</li>
+          <li><b>Puzzles</b> built from your own mistakes come back until you own them.</li>
+          <li><b>Progress</b> picks one thing to fix next. Repeat.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- REVIEW -->
+    <section id="page-review" class="page">
+      <div id="review-empty" class="card empty">No game open yet. Analyse one, or open one from the Library.</div>
+      <div id="review" class="review" hidden>
+        <div class="board-col">
+          <div class="player-strip top" id="strip-top"></div>
+          <div class="board-wrap">
+            <div class="evalbar" id="evalbar"><div class="evalfill"></div><span class="evaltext"></span></div>
+            <div id="review-board"></div>
+          </div>
+          <div class="player-strip bottom" id="strip-bottom"></div>
+          <div class="controls">
+            <button class="btn icon" id="c-start" title="Start (Home)">|&lsaquo;</button>
+            <button class="btn icon" id="c-prevkey" title="Previous key moment (↑)">&laquo;</button>
+            <button class="btn icon" id="c-prev" title="Back (←)">&lsaquo;</button>
+            <button class="btn icon primary" id="c-play" title="Autoplay (space)">▶</button>
+            <button class="btn icon" id="c-next" title="Forward (→)">&rsaquo;</button>
+            <button class="btn icon" id="c-nextkey" title="Next key moment (↓)">&raquo;</button>
+            <button class="btn icon" id="c-end" title="End (End)">&rsaquo;|</button>
+            <button class="btn icon" id="c-flip" title="Flip board">⇅</button>
+          </div>
+          <div class="row tight">
+            <label class="check"><input type="checkbox" id="c-keyonly"> Autoplay key moments only</label>
+            <label class="check"><input type="checkbox" id="c-arrows" checked> Arrows</label>
+          </div>
+        </div>
+        <div class="side-col">
+          <div class="card compact">
+            <div class="game-title" id="game-title"></div>
+            <div class="stat-row" id="game-stats"></div>
+          </div>
+          <div class="card compact moment" id="moment"></div>
+          <div class="card compact">
+            <div class="graph-head"><b>Win chance</b><span class="muted small">tap to jump · ● your mistakes</span></div>
+            <svg id="evalgraph" viewBox="0 0 600 130" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="card compact">
+            <b>Key moments</b>
+            <div class="chips" id="key-chips"></div>
+          </div>
+          <div class="card compact">
+            <div class="moves" id="move-list"></div>
+          </div>
+          <div class="card compact">
+            <div class="row wrap">
+              <b class="grow">Brief for Claude</b>
+              <button class="btn small" id="copy-brief">Copy brief</button>
+              <button class="btn small ghost" id="dl-brief">.md</button>
+              <button class="btn small ghost" id="dl-json">analysis.json</button>
+            </div>
+            <details><summary class="muted small">Show brief</summary><pre id="brief-text" class="brief"></pre></details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PUZZLES -->
+    <section id="page-puzzles" class="page">
+      <div id="puzzle-empty" class="card empty">No puzzles yet. They're built from your analysed games: every clear mistake (one move much better than the rest) becomes a puzzle.</div>
+      <div id="puzzle" class="review" hidden>
+        <div class="board-col">
+          <div class="puzzle-prompt" id="pz-prompt"></div>
+          <div class="board-wrap"><div id="puzzle-board"></div></div>
+          <div class="controls">
+            <button class="btn" id="pz-hint">Hint</button>
+            <button class="btn ghost" id="pz-show">Show solution</button>
+            <button class="btn primary" id="pz-next">Next</button>
+          </div>
+        </div>
+        <div class="side-col">
+          <div class="card compact">
+            <div class="row wrap">
+              <b class="grow">Queue</b>
+              <label>Source
+                <select id="pz-source"><option value="all">All</option><option value="my_mistake">My mistakes</option><option value="punish">Punish their blunder</option></select>
+              </label>
+            </div>
+            <div class="stat-row" id="pz-stats"></div>
+          </div>
+          <div class="card compact moment" id="pz-feedback"></div>
+          <div class="card compact" id="pz-lesson"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROGRESS -->
+    <section id="page-progress" class="page">
+      <div id="progress-empty" class="card empty">Analyse a few games and your patterns show up here.</div>
+      <div id="progress" hidden>
+        <div class="card focus" id="focus-card"></div>
+        <div class="tiles" id="tiles"></div>
+        <div class="grid-2">
+          <div class="card"><h3>Accuracy by game</h3><svg id="acc-chart" viewBox="0 0 600 200"></svg><p class="muted small">Approximate (Lichess-style formula). Your rating comes from chess.com, not from this.</p></div>
+          <div class="card"><h3>What keeps costing you</h3><div id="tag-bars" class="bars"></div></div>
+        </div>
+        <div class="grid-2">
+          <div class="card"><h3>Habit cards</h3><div id="habit-cards" class="habit-cards"></div></div>
+          <div class="card"><h3>Training plan</h3><div id="plan"></div>
+            <div class="row"><span class="grow"></span><button class="btn small" id="copy-progress">Copy progress brief for Claude</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIBRARY -->
+    <section id="page-library" class="page">
+      <div class="card">
+        <div class="row wrap">
+          <h2 class="grow">Game library</h2>
+          <input id="lib-filter" type="search" placeholder="Filter by opponent or tag">
+          <button class="btn ghost" id="export-btn">Export backup</button>
+          <label class="btn ghost file-btn">Import backup<input type="file" id="import-file" accept=".json" hidden></label>
+        </div>
+        <p class="muted small">Games live in this browser only. Export a backup now and then; clearing site data erases them.</p>
+        <div id="lib-table"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="page-settings" class="page">
+      <div class="grid-2">
+        <div class="card">
+          <h2>You</h2>
+          <label class="field">Chess.com username <input id="s-user" type="text" spellcheck="false"></label>
+          <label class="field">Rating (blank = read from each game) <input id="s-rating" type="number" min="100" max="3200"></label>
+          <p class="muted small">Your rating sets how strict the mistake cutoffs are. Under 800, small slips aren't flagged so the real problems stand out.</p>
+          <label class="field">Engine depth
+            <select id="s-depth"><option value="10">10 · quick</option><option value="14">14 · standard</option><option value="18">18 · deep (slow on phones)</option></select>
+          </label>
+        </div>
+        <div class="card">
+          <h2>Look and sound</h2>
+          <label class="field">Theme
+            <select id="s-theme"><option value="cabin">Cabin at night</option><option value="clinical">Clinical</option></select>
+          </label>
+          <label class="check"><input type="checkbox" id="s-sound"> Move sounds</label>
+          <label class="field">Ambient
+            <select id="s-ambient"><option value="off">Off</option><option value="fire">Fireplace</option><option value="rain">Rain</option><option value="file">My own loop…</option></select>
+          </label>
+          <input type="file" id="s-ambient-file" accept="audio/*" hidden>
+          <label class="check"><input type="checkbox" id="s-motion"> Low-power mode (less motion and glow)</label>
+          <label class="field">Replay speed
+            <select id="s-speed"><option value="1800">Slow</option><option value="1100">Normal</option><option value="600">Fast</option></select>
+          </label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>About</h2>
+        <p class="small">Analysis by <a href="https://stockfishchess.org" target="_blank" rel="noopener">Stockfish</a> 17.1 (GPLv3), running entirely in your browser. Move logic by <a href="https://github.com/jhlywa/chess.js" target="_blank" rel="noopener">chess.js</a> (BSD-2). Pieces by Colin M.L. Burnett (CC BY-SA 3.0). See <a href="LICENSES.md">LICENSES.md</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
